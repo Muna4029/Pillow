@@ -4,19 +4,14 @@ on:
   push:
     branches:
       - "**"
-    paths-ignore:
+    paths-ignore: &paths-ignore
       - ".github/workflows/docs.yml"
       - ".github/workflows/wheels*"
       - ".gitmodules"
       - "docs/**"
       - "wheels/**"
   pull_request:
-    paths-ignore:
-      - ".github/workflows/docs.yml"
-      - ".github/workflows/wheels*"
-      - ".gitmodules"
-      - "docs/**"
-      - "wheels/**"
+    paths-ignore: *paths-ignore
   workflow_dispatch:
 
 permissions:
@@ -27,19 +22,30 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  COVERAGE_CORE: sysmon
+  FORCE_COLOR: 1
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["pypy3.11", "3.11", "3.12", "3.13", "3.14"]
+        python-version: [
+          "pypy3.12",
+          "pypy3.11",
+          "3.15t",
+          "3.15",
+          "3.14t",
+          "3.14",
+          "3.13",
+        ]
         architecture: ["x64"]
+        os: ["windows-latest"]
         include:
+            # Test the next oldest Python on ARM64
+            - { python-version: "3.12", architecture: "arm64", os: "windows-11-arm" }
             # Test the oldest Python on 32-bit
-            - { python-version: "3.10", architecture: "x86" }
+            - { python-version: "3.11", architecture: "x86", os: "windows-2022" }
 
     timeout-minutes: 45
 
@@ -47,19 +53,19 @@ jobs:
 
     steps:
     - name: Checkout Pillow
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7.0.1
       with:
         persist-credentials: false
 
     - name: Checkout cached dependencies
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7.0.1
       with:
         persist-credentials: false
         repository: python-pillow/pillow-depends
         path: winbuild\depends
 
     - name: Checkout extra test images
-      uses: actions/checkout@v5
+      uses: actions/checkout@v7.0.1
       with:
         persist-credentials: false
         repository: python-pillow/test-images
@@ -67,7 +73,7 @@ jobs:
 
     # sets env: pythonLocation
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7.1.0
       with:
         python-version: ${{ matrix.python-version }}
         allow-prereleases: true
@@ -83,9 +89,9 @@ jobs:
         python3 -m pip install --upgrade pip
 
     - name: Install CPython dependencies
-      if: "!contains(matrix.python-version, 'pypy') && !contains(matrix.python-version, '3.14') && matrix.architecture != 'x86'"
+      if: "!contains(matrix.python-version, 'pypy') && matrix.architecture != 'x86'"
       run: |
-        python3 -m pip install PyQt6
+        python3 -m pip install --only-binary=:all: PyQt6 || true
 
     - name: Install PyArrow dependency
       run: |
@@ -97,8 +103,10 @@ jobs:
         choco install nasm --no-progress
         echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
 
-        choco install ghostscript --version=10.6.0 --no-progress
-        echo "C:\Program Files\gs\gs10.06.0\bin" >> $env:GITHUB_PATH
+        # "choco install ghostscript" hangs on ARM64, so extract instead
+        gh release download -R ArtifexSoftware/ghostpdl-downloads --pattern "gs*w64.exe" --output gs.exe
+        7z x -y gs.exe -oC:\gs > $null
+        echo "C:\gs\bin" >> $env:GITHUB_PATH
 
         # Install extra test images
         xcopy /S /Y Tests\test-images\* Tests\images
@@ -107,15 +115,17 @@ jobs:
         & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" `
           | find """catalog_buildVersion""" `
           | ForEach-Object { $a = $_.split(" ")[1]; echo "vs=$a" >> $env:GITHUB_OUTPUT }
+      env:
+        GH_TOKEN: ${{ github.token }}
       shell: pwsh
 
     - name: Cache build
       id: build-cache
-      uses: actions/cache@v4
+      uses: actions/cache@v6.1.0
       with:
         path: winbuild\build
         key:
-          ${{ hashFiles('winbuild\build_prepare.py') }}-${{ hashFiles('.github\workflows\test-windows.yml') }}-${{ env.pythonLocation }}-${{ steps.install.outputs.vs }}
+          ${{ hashFiles('.github\dependencies.json') }}-${{ hashFiles('winbuild\build_prepare.py') }}-${{ hashFiles('.github\workflows\test-windows.yml') }}-${{ matrix.os }}-${{ matrix.architecture }}-${{ steps.install.outputs.vs }}
 
     - name: Prepare build
       if: steps.build-cache.outputs.cache-hit != 'true'
@@ -187,8 +197,9 @@ jobs:
     # trim ~150MB for each job
     - name: Optimize build cache
       if: steps.build-cache.outputs.cache-hit != 'true'
-      run: rmdir /S /Q winbuild\build\src
-      shell: cmd
+      run: |
+        rm -rf winbuild\build\src
+      shell: bash
 
     - name: Build Pillow
       run: |
@@ -205,9 +216,7 @@ jobs:
 
     - name: Test Pillow
       run: |
-        path %GITHUB_WORKSPACE%\winbuild\build\bin;%PATH%
         .ci\test.cmd
-      shell: cmd
 
     - name: Prepare to upload errors
       if: failure()
@@ -216,31 +225,28 @@ jobs:
       shell: bash
 
     - name: Upload errors
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7.0.2
       if: failure()
       with:
         name: errors
         path: Tests/errors
 
-    - name: After success
-      run: |
-        .ci/after_success.sh
-      shell: pwsh
-
     - name: Upload coverage
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7.1.1
       with:
         files: ./coverage.xml
         flags: GHA_Windows
         name: ${{ runner.os }} Python ${{ matrix.python-version }}
-        token: ${{ secrets.CODECOV_ORG_TOKEN }}
 
   success:
     permissions:
       contents: none
+    if: always()
     needs: build
     runs-on: ubuntu-latest
     name: Windows Test Successful
     steps:
       - name: Success
-        run: echo Windows Test Successful
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: test "$BUILD_RESULT" = "success"
