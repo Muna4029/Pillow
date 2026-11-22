@@ -19,6 +19,7 @@ function check_cibw_archs {
 # potential cross-build platforms before native platforms to ensure that we pick
 # up the cross environment.
 PROJECTDIR=$(pwd)
+PATCH_DIR=$(pwd)/patches
 if [[ "$CIBW_PLATFORM" == "ios" ]]; then
     check_cibw_archs
     # On iOS, CIBW_ARCHS is actually a multi-arch - arm64_iphoneos,
@@ -32,7 +33,6 @@ if [[ "$CIBW_PLATFORM" == "ios" ]]; then
     # or `build/deps/iphonesimulator`
     WORKDIR=$(pwd)/build/$IOS_SDK
     BUILD_PREFIX=$(pwd)/build/deps/$IOS_SDK
-    PATCH_DIR=$(pwd)/patches/iOS
 
     # GNU tooling insists on using aarch64 rather than arm64
     if [[ $PLAT == "arm64" ]]; then
@@ -90,28 +90,23 @@ fi
 
 ARCHIVE_SDIR=pillow-depends-main
 
-# Package versions for fresh source builds. Version numbers with "Patched"
-# annotations have a source code patch that is required for some platforms. If
-# you change those versions, ensure the patch is also updated.
-if [[ -n "$IOS_SDK" ]]; then
-  FREETYPE_VERSION=2.13.3
-else
-  FREETYPE_VERSION=2.14.1
-fi
-HARFBUZZ_VERSION=12.1.0
-LIBPNG_VERSION=1.6.50
-JPEGTURBO_VERSION=3.1.2
-OPENJPEG_VERSION=2.5.4
-XZ_VERSION=5.8.1
-ZSTD_VERSION=1.5.7
-TIFF_VERSION=4.7.1
-LCMS2_VERSION=2.17
-ZLIB_NG_VERSION=2.2.5
-LIBWEBP_VERSION=1.6.0
-BZIP2_VERSION=1.0.8
-LIBXCB_VERSION=1.17.0
-BROTLI_VERSION=1.1.0  # Patched; next release won't need patching. See patch file.
-LIBAVIF_VERSION=1.3.0
+VERSIONS_FILE="$PROJECTDIR/.github/dependencies.json"
+_get_ver() { python3 -c "import json; print(json.load(open('$VERSIONS_FILE'))['$1'])"; }
+FREETYPE_VERSION=$(_get_ver freetype | tr - .)
+HARFBUZZ_VERSION=$(_get_ver harfbuzz)
+LIBPNG_VERSION=$(_get_ver libpng)
+JPEGTURBO_VERSION=$(_get_ver jpegturbo)
+OPENJPEG_VERSION=$(_get_ver openjpeg)
+XZ_VERSION=$(_get_ver xz)
+ZSTD_VERSION=$(_get_ver zstd)
+TIFF_VERSION=$(_get_ver tiff)
+LCMS2_VERSION=$(_get_ver lcms2)
+ZLIB_NG_VERSION=$(_get_ver zlib-ng)
+LIBWEBP_VERSION=$(_get_ver libwebp)
+BZIP2_VERSION=$(_get_ver bzip2)
+LIBXCB_VERSION=$(_get_ver libxcb)
+BROTLI_VERSION=$(_get_ver brotli)
+LIBAVIF_VERSION=$(_get_ver libavif)
 
 function build_pkg_config {
     if [ -e pkg-config-stamp ]; then return; fi
@@ -149,18 +144,20 @@ function build_zlib_ng {
     ORIGINAL_HOST_CONFIGURE_FLAGS=$HOST_CONFIGURE_FLAGS
     unset HOST_CONFIGURE_FLAGS
 
-    build_github zlib-ng/zlib-ng $ZLIB_NG_VERSION --zlib-compat
+    if [[ -n "$IS_MACOS" ]]; then
+        build_github zlib-ng/zlib-ng $ZLIB_NG_VERSION --installnamedir=$BUILD_PREFIX/lib --zlib-compat
+    else
+        # auditwheel does not bundle libz.so.1, so link zlib-ng statically,
+        # with hidden symbols so a system zlib cannot take its place.
+        CFLAGS="$CFLAGS -fPIC -fvisibility=hidden" build_github zlib-ng/zlib-ng $ZLIB_NG_VERSION --static --zlib-compat
+        # The shared install used to run ldconfig, which later steps rely on
+        # to find libraries in /usr/local/lib. musl has no cache.
+        if [[ -z "$IS_ALPINE" ]]; then
+            ldconfig
+        fi
+    fi
 
     HOST_CONFIGURE_FLAGS=$ORIGINAL_HOST_CONFIGURE_FLAGS
-
-    if [[ -n "$IS_MACOS" ]] && [[ -z "$IOS_SDK" ]]; then
-        # Ensure that on macOS, the library name is an absolute path, not an
-        # @rpath, so that delocate picks up the right library (and doesn't need
-        # DYLD_LIBRARY_PATH to be set). The default Makefile doesn't have an
-        # option to control the install_name. This isn't needed on iOS, as iOS
-        # only builds the static library.
-        install_name_tool -id $BUILD_PREFIX/lib/libz.1.dylib $BUILD_PREFIX/lib/libz.1.dylib
-    fi
     touch zlib-stamp
 }
 
@@ -168,7 +165,7 @@ function build_brotli {
     if [ -e brotli-stamp ]; then return; fi
     local out_dir=$(fetch_unpack https://github.com/google/brotli/archive/v$BROTLI_VERSION.tar.gz brotli-$BROTLI_VERSION.tar.gz)
     (cd $out_dir \
-        && cmake -DCMAKE_INSTALL_PREFIX=$BUILD_PREFIX -DCMAKE_INSTALL_LIBDIR=$BUILD_PREFIX/lib -DCMAKE_INSTALL_NAME_DIR=$BUILD_PREFIX/lib $HOST_CMAKE_FLAGS . \
+        && cmake -DCMAKE_INSTALL_PREFIX=$BUILD_PREFIX -DCMAKE_INSTALL_LIBDIR=$BUILD_PREFIX/lib -DCMAKE_INSTALL_NAME_DIR=$BUILD_PREFIX/lib -DCMAKE_MACOSX_BUNDLE=OFF $HOST_CMAKE_FLAGS . \
         && make -j4 install)
     touch brotli-stamp
 }
@@ -191,10 +188,9 @@ function build_libavif {
     python3 -m pip install meson ninja
 
     if ([[ "$PLAT" == "x86_64" ]] && [[ -z "$IOS_SDK" ]]) || [ -n "$SANITIZER" ]; then
-        build_simple nasm 2.16.03 https://www.nasm.us/pub/nasm/releasebuilds/2.16.03
+        build_simple nasm 3.02 https://www.nasm.us/pub/nasm/releasebuilds/3.02
     fi
 
-    local build_type=MinSizeRel
     local build_shared=ON
     local lto=ON
 
@@ -211,9 +207,6 @@ function build_libavif {
             build_shared=OFF
         fi
     else
-        if [[ "$MB_ML_VER" == 2014 ]] && [[ "$PLAT" == "x86_64" ]]; then
-            build_type=Release
-        fi
         libavif_cmake_flags=(-DCMAKE_SHARED_LINKER_FLAGS_INIT="-Wl,--strip-all,-z,relro,-z,now")
     fi
     if [[ -n "$IOS_SDK" ]] && [[ "$PLAT" == "x86_64" ]]; then
@@ -242,7 +235,7 @@ function build_libavif {
             -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=$lto \
             -DCMAKE_C_VISIBILITY_PRESET=hidden \
             -DCMAKE_CXX_VISIBILITY_PRESET=hidden \
-            -DCMAKE_BUILD_TYPE=$build_type \
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
             "${libavif_cmake_flags[@]}" \
             $HOST_CMAKE_FLAGS . )
 
@@ -279,7 +272,7 @@ function build {
 
     build_simple xcb-proto 1.17.0 https://xorg.freedesktop.org/archive/individual/proto
     if [[ -n "$IS_MACOS" ]]; then
-        build_simple xorgproto 2024.1 https://www.x.org/pub/individual/proto
+        build_simple xorgproto 2025.1 https://www.x.org/pub/individual/proto
         build_simple libXau 1.0.12 https://www.x.org/pub/individual/lib
         build_simple libpthread-stubs 0.5 https://xcb.freedesktop.org/dist
     else
@@ -287,15 +280,33 @@ function build {
     fi
     build_simple libxcb $LIBXCB_VERSION https://www.x.org/releases/individual/lib
 
-    build_libjpeg_turbo
+    # -DCMAKE_POSITION_INDEPENDENT_CODE=1 is a workaround from https://github.com/libjpeg-turbo/libjpeg-turbo/issues/898
+    HOST_CMAKE_FLAGS="-DCMAKE_POSITION_INDEPENDENT_CODE=1 $HOST_CMAKE_FLAGS" build_libjpeg_turbo
+
     if [[ -n "$IS_MACOS" ]]; then
         # Custom tiff build to include jpeg; by default, configure won't include
         # headers/libs in the custom macOS/iOS prefix. Explicitly disable webp,
         # libdeflate and zstd, because on x86_64 macs, it will pick up the
         # Homebrew versions of those libraries from /usr/local.
+        tiff_configure_args=(
+            --disable-contrib
+            --disable-cxx
+            --disable-dependency-tracking
+            --disable-docs
+            --disable-libdeflate
+            --disable-tests
+            --disable-tools
+            --disable-webp
+            --disable-zstd
+            --with-jpeg-include-dir=$BUILD_PREFIX/include
+            --with-jpeg-lib-dir=$BUILD_PREFIX/lib
+        )
+        if [[ -z "$IOS_SDK" ]]; then
+            # iOS links libtiff statically, but otherwise we need the dylib.
+            tiff_configure_args+=(--disable-static)
+        fi
         build_simple tiff $TIFF_VERSION https://download.osgeo.org/libtiff tar.gz \
-            --with-jpeg-include-dir=$BUILD_PREFIX/include --with-jpeg-lib-dir=$BUILD_PREFIX/lib \
-            --disable-webp --disable-libdeflate --disable-zstd
+            "${tiff_configure_args[@]}"
     else
         build_zstd
         build_tiff
@@ -320,21 +331,19 @@ function build {
 
     build_brotli
 
-    if [[ -n "$IS_MACOS" ]]; then
-        # Custom freetype build
-        if [[ -z "$IOS_SDK" ]]; then
-          build_simple sed 4.9 https://mirrors.middlendian.com/gnu/sed
-        fi
-
-        build_simple freetype $FREETYPE_VERSION https://download.savannah.gnu.org/releases/freetype tar.gz --with-harfbuzz=no
-    else
-        build_freetype
-    fi
+    # FreeType and HarfBuzz each want the other:
+    # HarfBuzz reads font data through FreeType, and FreeType's auto-hinter asks HarfBuzz which glyphs a script covers.
+    # Break the cycle by building FreeType twice, so that the FreeType we ship is linked against the HarfBuzz we ship.
+    build_freetype
 
     if [[ -z "$IOS_SDK" ]]; then
         # On iOS, there's no vendor-provided raqm, and we can't ship it due to
         # licensing, so there's no point building harfbuzz.
         build_harfbuzz
+
+        # Now that HarfBuzz exists, build FreeType again against it.
+        rm -rf freetype-$FREETYPE_VERSION freetype-stamp
+        CFLAGS="$CFLAGS -DFT_CONFIG_OPTION_USE_HARFBUZZ" build_freetype
     fi
 }
 
