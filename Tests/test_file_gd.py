@@ -21,7 +21,10 @@ def test_sanity() -> None:
 def test_transparency() -> None:
     with open(TEST_GD_FILE, "rb") as fp:
         data = bytearray(fp.read())
+    # Set the 4-byte length field to 5 and append the corresponding 5 bytes
+    # so the in-memory buffer remains consistent and does not cause truncation.
     data[7:11] = b"\x00\x00\x00\x05"
+    data.extend(b"\x00\x00\x00\x00\x05")
     with GdImageFile.open(BytesIO(data)) as im:
         assert im.info["transparency"] == 5
 

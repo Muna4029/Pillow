@@ -320,7 +320,7 @@ class ImageFile(Image.Image):
                     # use mmap, if possible
                     import mmap
 
-                    with open(self.filename) as fp:
+                    with open(self.filename, 'rb') as fp:
                         self.map = mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ)
                     if offset + self.size[1] * args[1] > self.map.size():
                         msg = "buffer is not large enough"

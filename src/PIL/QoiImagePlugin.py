@@ -41,31 +41,43 @@ class QoiImageFile(ImageFile.ImageFile):
 class QoiDecoder(ImageFile.PyDecoder):
     _pulls_fd = True
     _previous_pixel: bytes | bytearray | None = None
-    _previously_seen_pixels: dict[int, bytes | bytearray] = {}
+    _previously_seen_pixels: dict[int, bytes | bytearray] | None = None
 
     def _add_to_previous_pixels(self, value: bytes | bytearray) -> None:
         self._previous_pixel = value
 
         r, g, b, a = value
         hash_value = (r * 3 + g * 5 + b * 7 + a * 11) % 64
+        # Ensure the dict exists on the instance
+        if self._previously_seen_pixels is None:
+            self._previously_seen_pixels = {}
         self._previously_seen_pixels[hash_value] = value
 
     def decode(self, buffer: bytes | Image.SupportsArrayInterface) -> tuple[int, int]:
         assert self.fd is not None
 
+        # Initialize instance state to avoid shared mutable defaults
         self._previously_seen_pixels = {}
         self._previous_pixel = bytearray((0, 0, 0, 255))
+
+        def _safe_read(n: int) -> bytes:
+            """Read exactly n bytes or raise an OSError for truncated files."""
+            data = self.fd.read(n)
+            if not data or len(data) != n:
+                raise OSError("image file is truncated")
+            return data
 
         data = bytearray()
         bands = Image.getmodebands(self.mode)
         dest_length = self.state.xsize * self.state.ysize * bands
         while len(data) < dest_length:
-            byte = self.fd.read(1)[0]
+            byte = _safe_read(1)[0]
             value: bytes | bytearray
             if byte == 0b11111110 and self._previous_pixel:  # QOI_OP_RGB
-                value = bytearray(self.fd.read(3)) + self._previous_pixel[3:]
+                rgb = _safe_read(3)
+                value = bytearray(rgb) + self._previous_pixel[3:]
             elif byte == 0b11111111:  # QOI_OP_RGBA
-                value = self.fd.read(4)
+                value = bytearray(_safe_read(4))
             else:
                 op = byte >> 6
                 if op == 0:  # QOI_OP_INDEX
@@ -85,7 +97,7 @@ class QoiDecoder(ImageFile.PyDecoder):
                         )
                     )
                 elif op == 2 and self._previous_pixel:  # QOI_OP_LUMA
-                    second_byte = self.fd.read(1)[0]
+                    second_byte = _safe_read(1)[0]
                     diff_green = (byte & 0b00111111) - 32
                     diff_red = ((second_byte & 0b11110000) >> 4) - 8
                     diff_blue = (second_byte & 0b00001111) - 8
@@ -104,6 +116,7 @@ class QoiDecoder(ImageFile.PyDecoder):
                         value = value[:3]
                     data += value * run_length
                     continue
+            # _previously_seen_pixels is guaranteed to be a dict here
             self._add_to_previous_pixels(value)
 
             if bands == 3:
@@ -136,7 +149,7 @@ def _save(im: Image.Image, fp: IO[bytes], filename: str | bytes) -> None:
 class QoiEncoder(ImageFile.PyEncoder):
     _pushes_fd = True
     _previous_pixel: tuple[int, int, int, int] | None = None
-    _previously_seen_pixels: dict[int, tuple[int, int, int, int]] = {}
+    _previously_seen_pixels: dict[int, tuple[int, int, int, int]] | None = None
     _run = 0
 
     def _write_run(self) -> bytes:
@@ -153,6 +166,7 @@ class QoiEncoder(ImageFile.PyEncoder):
     def encode(self, bufsize: int) -> tuple[int, int, bytes]:
         assert self.im is not None
 
+        # Initialize instance state to avoid shared mutable defaults
         self._previously_seen_pixels = {0: (0, 0, 0, 0)}
         self._previous_pixel = (0, 0, 0, 255)
 

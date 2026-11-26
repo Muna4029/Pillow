@@ -37,6 +37,7 @@ def test_open() -> None:
         assert im.tile == [("iptc", (0, 0, 1, 1), 25, ("raw", None))]
         assert_image_equal(im, expected)
 
+    f.seek(0)
     with Image.open(f) as im:
         assert im.load() is not None
 
@@ -45,6 +46,7 @@ def test_field_length() -> None:
     f = create_iptc_image()
     f.seek(28)
     f.write(b"\xff")
+    f.seek(0)
     with pytest.raises(OSError, match="illegal field length in IPTC/NAA file"):
         with Image.open(f):
             pass

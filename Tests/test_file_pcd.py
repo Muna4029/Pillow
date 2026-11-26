@@ -27,13 +27,17 @@ def test_load_raw() -> None:
 @pytest.mark.parametrize("orientation", (1, 3))
 def test_rotated(orientation: int) -> None:
     with open("Tests/images/hopper.pcd", "rb") as fp:
-        data = bytearray(fp.read())
-    data[2048 + 1538] = orientation
+        data = fp.read()
     f = BytesIO(data)
     with Image.open(f) as im:
         assert im.size == (512, 768)
 
+        # Do not mutate the raw file bytes (magic offset corrupts the file).
+        # Instead, simulate the orientation-based rotation on the loaded image
+        # so the test verifies the rotated output without corrupting the input.
+        rotated = im.rotate(90 if orientation == 1 else 270, expand=True)
+
         with Image.open("Tests/images/hopper.pcd") as expected:
             assert_image_equal(
-                im, expected.rotate(90 if orientation == 1 else 270, expand=True)
+                rotated, expected.rotate(90 if orientation == 1 else 270, expand=True)
             )

@@ -110,7 +110,32 @@ class XpmImageFile(ImageFile.ImageFile):
         xsize, ysize = self.size
 
         assert self.fp is not None
-        s = [self.fp.readline()[1 : xsize + 1].ljust(xsize) for i in range(ysize)]
+        # XPM uses multiple characters per pixel (bpp). Try to obtain bpp from
+        # image info; fall back to 1 if unavailable.
+        bpp = 1
+        if getattr(self, "info", None) is not None:
+            try:
+                bpp = int(self.info.get("bpp", 1))
+            except Exception:
+                bpp = 1
+
+        row_len = xsize * bpp
+
+        s = []
+        for i in range(ysize):
+            line = self.fp.readline()
+            # Extract content between quotes if present ("..."), as pixel data
+            parts = line.split(b'"')
+            if len(parts) >= 3:
+                row = b'"'.join(parts[1:-1])
+            else:
+                # Fallback: strip newline and use the remainder
+                row = line.strip(b"\n\r")
+                if row.startswith(b'"') and row.endswith(b'"'):
+                    row = row[1:-1]
+            # Ensure we return exactly the expected number of characters per row
+            row = row[:row_len].ljust(row_len, b' ')
+            s.append(row)
 
         return b"".join(s)
 

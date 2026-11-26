@@ -150,6 +150,8 @@ class IptcImageFile(ImageFile.ImageFile):
                     o.write(s)
                     size -= len(s)
 
+            # Rewind the buffer so Image.open reads from the start
+            o.seek(0)
             with Image.open(o) as _im:
                 if band is not None:
                     bands = [Image.new("L", _im.size)] * Image.getmodebands(self.mode)

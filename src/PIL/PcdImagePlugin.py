@@ -45,13 +45,18 @@ class PcdImageFile(ImageFile.ImageFile):
         elif orientation == 3:
             self.tile_post_rotate = 270
 
-        self._mode = "RGB"
-        self._size = (512, 768) if orientation in (1, 3) else (768, 512)
-        self.tile = [ImageFile._Tile("pcd", (0, 0, 768, 512), 96 * 2048)]
+        # Use public attributes expected by the PIL core
+        self.mode = "RGB"
+        # width, height depending on orientation
+        self.size = (512, 768) if orientation in (1, 3) else (768, 512)
+        w, h = self.size
+        # Tile bbox must reflect the chosen image size
+        self.tile = [ImageFile._Tile("pcd", (0, 0, w, h), 96 * 2048)]
 
     def load_prepare(self) -> None:
         if self._im is None and self.tile_post_rotate:
-            self.im = Image.core.new(self.mode, (768, 512))
+            # Create the core image using the mode and size established in _open
+            self.im = Image.core.new(self.mode, self.size)
         ImageFile.ImageFile.load_prepare(self)
 
     def load_end(self) -> None:

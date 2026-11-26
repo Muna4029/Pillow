@@ -29,17 +29,20 @@ class BitStream:
         self.bitbuffer = 0
 
     def next(self) -> int:
-        return i8(self.fp.read(1))
+        b = self.fp.read(1)
+        if not b:
+            raise OSError("Truncated MPEG stream")
+        return i8(b)
 
     def peek(self, bits: int) -> int:
         while self.bits < bits:
             self.bitbuffer = (self.bitbuffer << 8) + self.next()
             self.bits += 8
-        return self.bitbuffer >> (self.bits - bits) & (1 << bits) - 1
+        return (self.bitbuffer >> (self.bits - bits)) & ((1 << bits) - 1)
 
     def skip(self, bits: int) -> None:
         while self.bits < bits:
-            self.bitbuffer = (self.bitbuffer << 8) + i8(self.fp.read(1))
+            self.bitbuffer = (self.bitbuffer << 8) + self.next()
             self.bits += 8
         self.bits = self.bits - bits
 

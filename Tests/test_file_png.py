@@ -650,16 +650,18 @@ class TestFilePng:
         # Set MAXBLOCK to the length of the actual data
         # so that the decoder finishes reading before the chunk ends
         MAXBLOCK = ImageFile.MAXBLOCK
+        _LOAD_TRUNC = ImageFile.LOAD_TRUNCATED_IMAGES
         ImageFile.MAXBLOCK = 45
         ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-        with Image.open("Tests/images/padded_idat.png") as im:
-            im.load()
+        try:
+            with Image.open("Tests/images/padded_idat.png") as im:
+                im.load()
 
+                assert_image_equal_tofile(im, "Tests/images/bw_gradient.png")
+        finally:
             ImageFile.MAXBLOCK = MAXBLOCK
-            ImageFile.LOAD_TRUNCATED_IMAGES = False
-
-            assert_image_equal_tofile(im, "Tests/images/bw_gradient.png")
+            ImageFile.LOAD_TRUNCATED_IMAGES = _LOAD_TRUNC
 
     @pytest.mark.parametrize(
         "cid", (b"IHDR", b"sRGB", b"pHYs", b"acTL", b"fcTL", b"fdAT")

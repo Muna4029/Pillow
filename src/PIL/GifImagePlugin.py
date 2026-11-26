@@ -1012,7 +1012,10 @@ def _get_palette_bytes(im: Image.Image) -> bytes:
 
     palette = bytes(im.palette.palette)
     if im.palette.mode == "RGBA":
-        palette = b"".join(palette[i * 4 : i * 4 + 3] for i in range(len(palette) // 3))
+        # For RGBA palettes, entries are 4 bytes each (R,G,B,A).
+        # Only include RGB bytes for GIF headers: take the first 3 bytes
+        # of each 4-byte entry. Iterate over len(palette)//4 entries.
+        palette = b"".join(palette[i * 4 : i * 4 + 3] for i in range(len(palette) // 4))
     return palette
 
 
@@ -1184,7 +1187,10 @@ def getdata(
     from io import BytesIO
 
     class Collector(BytesIO):
-        data = []
+        def __init__(self):
+            super().__init__()
+            # Use an instance attribute to avoid sharing state across calls
+            self.data = []
 
         def write(self, data: Buffer) -> int:
             self.data.append(data)

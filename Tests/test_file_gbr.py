@@ -34,19 +34,28 @@ def test_multiple_load_operations() -> None:
 
 
 def create_gbr_image(info: dict[str, int] = {}, magic_number=b"") -> BytesIO:
-    return BytesIO(
-        b"".join(
-            _binary.o32be(i)
-            for i in [
-                info.get("header_size", 20),
-                info.get("version", 1),
-                info.get("width", 1),
-                info.get("height", 1),
-                info.get("color_depth", 1),
-            ]
-        )
-        + magic_number
+    # Build header fields
+    width = info.get("width", 1)
+    height = info.get("height", 1)
+    color_depth = info.get("color_depth", 1)
+
+    header = b"".join(
+        _binary.o32be(i)
+        for i in [
+            info.get("header_size", 20),
+            info.get("version", 1),
+            width,
+            height,
+            color_depth,
+        ]
     )
+
+    # Provide minimal pixel data so the stream is not truncated.
+    # For simple GBR brushes, pixel data size is width * height * color_depth bytes.
+    pixel_count = max(0, int(width) * int(height) * int(color_depth))
+    pixel_data = b"\x00" * pixel_count
+
+    return BytesIO(header + magic_number + pixel_data)
 
 
 def test_invalid_file() -> None:

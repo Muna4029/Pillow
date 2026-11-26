@@ -6,7 +6,8 @@ from io import BytesIO
 
 from PIL import Image
 
-with Image.open(
-    BytesIO(b"\x00\x00\x00\x0cjP\x20\x20\x0d\x0a\x87\x0a\x00\x00\x00\x00hang")
-):
-    pass
+if __name__ == "__main__":
+    with Image.open(
+        BytesIO(b"\x00\x00\x00\x0cjP\x20\x20\x0d\x0a\x87\x0a\x00\x00\x00\x00hang")
+    ):
+        pass

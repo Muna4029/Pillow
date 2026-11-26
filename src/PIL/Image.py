@@ -1834,7 +1834,10 @@ class Image:
         if len(source) == 4:
             overlay_crop_box = tuple(source)
         elif len(source) == 2:
-            overlay_crop_box = tuple(source) + im.size
+            # source is (left, top); im.size is (width, height). Compute
+            # a proper (left, top, right, bottom) crop box for the overlay.
+            left, top = source
+            overlay_crop_box = (left, top, left + im.size[0], top + im.size[1])
         else:
             msg = "Source must be a sequence of length 2 or 4"
             raise ValueError(msg)
@@ -3275,8 +3278,12 @@ def fromarray(obj: SupportsArrayInterface, mode: str | None = None) -> Image:
         typekey = (1, 1) + shape[2:], arr["typestr"]
     except KeyError as e:
         if mode is not None:
+            # No typestr available; trust caller-supplied mode. Ensure
+            # typemode/rawmode/color_modes are defined to avoid UnboundLocalError.
             typekey = None
             color_modes: list[str] = []
+            typemode = mode
+            rawmode = mode
         else:
             msg = "Cannot handle this data type"
             raise TypeError(msg) from e
@@ -3288,6 +3295,7 @@ def fromarray(obj: SupportsArrayInterface, mode: str | None = None) -> Image:
             msg = f"Cannot handle this data type: {typekey_shape}, {typestr}"
             raise TypeError(msg) from e
     if mode is not None:
+        # typemode and color_modes are guaranteed to be defined by now
         if mode != typemode and mode not in color_modes:
             deprecate("'mode' parameter for changing data types", 13)
         rawmode = mode
@@ -3303,7 +3311,8 @@ def fromarray(obj: SupportsArrayInterface, mode: str | None = None) -> Image:
         msg = f"Too many dimensions: {ndim} > {ndmax}."
         raise ValueError(msg)
 
-    size = 1 if ndim == 1 else shape[1], shape[0]
+    # For 1-D arrays, treat as a single row: width = shape[0], height = 1
+    size = (shape[0], 1) if ndim == 1 else (shape[1], shape[0])
     if strides is not None:
         if hasattr(obj, "tobytes"):
             obj = obj.tobytes()

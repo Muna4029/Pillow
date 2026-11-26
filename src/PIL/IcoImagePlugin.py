@@ -118,7 +118,11 @@ def _save(im: Image.Image, fp: IO[bytes], filename: str | bytes) -> None:
 
 
 def _accept(prefix: bytes) -> bool:
-    return prefix.startswith(_MAGIC)
+    # Accept both ICO (type=1) and CUR (cursor type=2) magic numbers.
+    # _MAGIC remains the ICO magic (b"\0\0\1\0"); accept should
+    # also recognize the CUR magic b"\0\0\2\0" so that .cur files
+    # are opened by this plugin.
+    return prefix.startswith(_MAGIC) or prefix.startswith(b"\0\0\2\0")
 
 
 class IconHeader(NamedTuple):

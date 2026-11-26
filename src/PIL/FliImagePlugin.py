@@ -29,11 +29,26 @@ from ._util import DeferredError
 
 
 def _accept(prefix: bytes) -> bool:
-    return (
-        len(prefix) >= 16
-        and i16(prefix, 4) in [0xAF11, 0xAF12]
-        and i16(prefix, 14) in [0, 3]  # flags
-    )
+    if len(prefix) < 16:
+        return False
+
+    # magic number at offset 4
+    if i16(prefix, 4) not in (0xAF11, 0xAF12):
+        return False
+
+    # flags at offset 14 should be 0 or 3
+    if i16(prefix, 14) not in (0, 3):
+        return False
+
+    # basic sanity checks for width/height at offsets 8 and 10
+    # (avoid false positives from other formats that happen to have the
+    # magic bytes at these offsets)
+    width = i16(prefix, 8)
+    height = i16(prefix, 10)
+    if not (0 < width <= 8192 and 0 < height <= 8192):
+        return False
+
+    return True
 
 
 ##
@@ -161,7 +176,7 @@ class FliImageFile(ImageFile.ImageFile):
         self.fp.seek(self.__offset)
 
         s = self.fp.read(4)
-        if not s:
+        if len(s) < 4:
             msg = "missing frame size"
             raise EOFError(msg)
 

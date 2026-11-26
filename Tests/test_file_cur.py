@@ -31,13 +31,36 @@ def test_largest_cursor() -> None:
     for w, h in sizes:
         image_offset = 6 + len(sizes) * 16 if (w, h) == max(sizes) else 0
         data += o8(w) + o8(h) + o8(0) * 10 + o32(image_offset)
+
+    # Construct a valid BITMAPINFOHEADER (40 bytes) and provide XOR (32bpp) + AND mask data
+    width = 8
+    height = 8
+    xor_size = width * height * 4
+    # mask: 1 bit per pixel, padded to 32-bit (4-byte) boundaries per row
+    mask_row_bytes = ((width + 31) // 32) * 4
+    mask_size = mask_row_bytes * height
+
     data += (
-        o32(12)  # header size
-        + o16(8)  # width
-        + o16(16)  # height
-        + o16(0)  # planes
-        + o16(1)  # bits
+        o32(40)  # header size (BITMAPINFOHEADER)
+        + o32(width)  # width
+        + o32(height * 2)  # height (image + mask)
+        + o16(1)  # planes
+        + o16(32)  # bits per pixel
+        + o32(0)  # compression (BI_RGB)
+        + o32(xor_size + mask_size)  # size of bitmap data
+        + o32(0)  # x pixels per meter
+        + o32(0)  # y pixels per meter
+        + o32(0)  # colors used
+        + o32(0)  # important colors
     )
+
+    # XOR bitmap: simple opaque pixels (BGRA). Use a non-empty image so decoder has enough data.
+    xor_pixels = b"\x00\x00\x00\xff" * (width * height)
+    # AND mask: all zeros (no transparency mask)
+    mask_bytes = b"\x00" * mask_size
+
+    data += xor_pixels + mask_bytes
+
     with Image.open(BytesIO(data)) as im:
         assert im.size == (8, 8)
 

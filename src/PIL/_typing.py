@@ -3,7 +3,14 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
-from typing import Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+
+# Ensure typing-only names that are exported (e.g. IntegralLike) exist at
+# runtime even though TYPE_CHECKING is False during normal execution.
+if not TYPE_CHECKING:
+    # Provide a simple runtime fallback so imports like
+    # 'from PIL._typing import IntegralLike' do not fail at runtime.
+    IntegralLike = int
 
 TYPE_CHECKING = False
 if TYPE_CHECKING:
